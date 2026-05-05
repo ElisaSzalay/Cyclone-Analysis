@@ -6,7 +6,6 @@
 %    - NPPV : Net Primary Production  [lon x lat x depth x time]  (surface)
 %    - SPM  : Suspended Particulate Matter  [lon x lat x time]
 %
-%
 %  Structure:
 %    0. Settings
 %    1. Load baseline data
@@ -67,8 +66,6 @@ fprintf('=== UNIFIED NPPV & SPM ANALYSIS ===\n\n');
 
 %% =========================================================================
 %  1. LOAD BASELINE DATA
-%  FIX (E): Cyclone exclusions are now applied inside load_baseline_data
-%  via get_exclude_periods(), which contains all 8 forbidden periods.
 % =========================================================================
 
 fprintf('--- Loading baseline NPPV data ---\n');
@@ -167,7 +164,7 @@ fprintf('  Fina   SPM  anomaly (domain mean): %.4f\n', mean(anom_spm_fina(:),   
 
 %% =========================================================================
 %  4. T-TEST WITH 3-DAY MEANS AROUND CYCLONE PEAK
-
+% =========================================================================
 
 fprintf('\n--- T-TEST: 3-day peak means vs baseline (grid cell level) ---\n');
 
@@ -219,7 +216,6 @@ disp('============================================================')
 disp('  T-TEST RESULTS — Time series in overlap box')
 disp('============================================================')
 
-% FIX (B): All four blocks now have complete fprintf output including SPM Fina
 fprintf('\n--- ALFRED vs BASELINE ---\n')
 fprintf('NPPV: t = %.3f, p = %.5f  -> %s\n', t_nppv_alf, p_nppv_alfred, interpret_p(p_nppv_alfred))
 fprintf('SPM:  t = %.3f, p = %.5f  -> %s\n', t_spm_alf,  p_spm_alfred,  interpret_p(p_spm_alfred))
@@ -258,13 +254,7 @@ catch ME
 end
 
 %% =========================================================================
-%  5. FIGURES 
-%
-%  FIX (C): All time series use "days since start of cyclone period" on the
-%  x-axis (day 0 = first day of data, e.g. 1 Feb for Alfred). The peak is
-%  drawn as a vertical line at the correct offset from the start date.
-%      days_alf = days(t_alf - t_alf(1))          % starts at 0
-%      peak_day_alf = days(alfred_peak - alfred_start)   % peak line position
+%  5. FIGURES  
 % =========================================================================
 
 fprintf('\n--- Generating figures ---\n');
@@ -279,15 +269,15 @@ nppv_anom_abs = percentile_no_toolbox(abs([peak3_anom_nppv_alfred(:); peak3_anom
 spm_anom_abs  = percentile_no_toolbox(abs([peak3_anom_spm_alfred(:);  peak3_anom_spm_fina(:)]),  98);
 clims.nppv_anom = safe_clim([-nppv_anom_abs  nppv_anom_abs]);
 clims.spm_anom  = safe_clim([-spm_anom_abs   spm_anom_abs]);
-
 % =====================================================================
-% FIGURE 0 — NPPV & SPM: Baseline time series
+% FIGURE 0 — NPPV & SPM: Baseline time series (season days)
 % =====================================================================
-plot_baseline_timeseries( ...
+plot_baseline_seasonal( ...
     all_time_nppv_base, ts_base_nppv, ...
     all_time_spm_base,  ts_base_spm, ...
     'NPPV and SPM during Baseline period (Cyclone-Free)', ...
     'Baseline_NPPV_SPM_timeseries', output_dir);
+
 % =====================================================================
 % FIGURE 1 — NPPV: Time series in overlap box (raw values)
 % X-axis = days since start of cyclone period (day 0 = start, not peak)
@@ -409,7 +399,7 @@ function [data_cube, time_out, lon_out, lat_out] = load_baseline_data( ...
 % is_nppv = true  → data has 4 dims [lon x lat x depth x time], read depth=1
 % is_nppv = false → data has 3 dims [lon x lat x time]
 %
-% FIX (E): exclude periods are applied here via get_exclude_periods()
+
 
     exclude = get_exclude_periods();
     data_cube = [];
@@ -694,8 +684,7 @@ end
 
 % -------------------------------------------------------------------------
 function exclude = get_exclude_periods()
-% All cyclone-contaminated periods to exclude from baseline.
-% 8 periods total.
+
     exclude = [
         datetime(2022, 2,  7,'TimeZone','UTC')  datetime(2022, 2,12,'TimeZone','UTC');  % Dovi
         datetime(2021,12,  9,'TimeZone','UTC')  datetime(2021,12,15,'TimeZone','UTC');  % Ruby
@@ -709,7 +698,7 @@ function exclude = get_exclude_periods()
 end
 
 % -------------------------------------------------------------------------
-%  FIGURE FUNCTIONS  
+%  FIGURE FUNCTIONS 
 % -------------------------------------------------------------------------
 
 function y_out = fill_gaps(x, y)
@@ -922,7 +911,7 @@ end
 
 % -------------------------------------------------------------------------
 function plot_single_map(map_data, lat, lon, lat_box, lon_box, map_cmap, background_color, clim_values)
-% Plots a 2D map using imagesc
+
 
     h = imagesc(lon, lat, map_data');
     set(gca, 'YDir', 'normal');
@@ -976,47 +965,70 @@ function cmap = redblue(n)
         linspace(mid(1),top(1),n2)' linspace(mid(2),top(2),n2)' linspace(mid(3),top(3),n2)'
     ];
 end
-function plot_baseline_timeseries(t_nppv, ts_nppv, t_spm, ts_spm, ...
+
+function plot_baseline_seasonal(t_nppv, ts_nppv, t_spm, ts_spm, ...
         title_str, filename, output_dir)
 
-    figure('Position', [100 100 900 500]);
-    tiledlayout(2, 1, 'Padding', 'compact', 'TileSpacing', 'compact');
+    ref = datetime(2001, 11, 1, 'TimeZone', 'UTC');
 
-    % ---- Top panel: NPPV ----
-    ax1 = nexttile;
-    hold(ax1, 'on');
-    plot(ax1, t_nppv, ts_nppv, '-', 'Color', [0.20 0.50 0.90], ...
+    % Compute season day for each timestep
+    sd_nppv = NaN(numel(t_nppv), 1);
+    for k = 1:numel(t_nppv)
+        m = month(t_nppv(k)); d = day(t_nppv(k));
+        if m >= 11
+            sd_nppv(k) = days(datetime(2001,m,d,'TimeZone','UTC') - ref);
+        else
+            sd_nppv(k) = days(datetime(2002,m,d,'TimeZone','UTC') - ref);
+        end
+    end
+
+    sd_spm = NaN(numel(t_spm), 1);
+    for k = 1:numel(t_spm)
+        m = month(t_spm(k)); d = day(t_spm(k));
+        if m >= 11
+            sd_spm(k) = days(datetime(2001,m,d,'TimeZone','UTC') - ref);
+        else
+            sd_spm(k) = days(datetime(2002,m,d,'TimeZone','UTC') - ref);
+        end
+    end
+
+    % Average across the 3 years for each unique season day
+    sd_range = (0:max([sd_nppv; sd_spm]))';
+    mean_nppv = NaN(numel(sd_range), 1);
+    mean_spm  = NaN(numel(sd_range), 1);
+
+    for k = 1:numel(sd_range)
+        idx_n = sd_nppv == sd_range(k);
+        idx_s = sd_spm  == sd_range(k);
+        if any(idx_n); mean_nppv(k) = mean(ts_nppv(idx_n), 'omitnan'); end
+        if any(idx_s); mean_spm(k)  = mean(ts_spm(idx_s),  'omitnan'); end
+    end
+
+    % Reference dates for x-axis labels
+    ref_dates = ref + days(sd_range);
+
+    figure('Position', [100 100 900 400]);
+
+    % ---- Left y-axis: NPPV ----
+    yyaxis left
+    h1 = plot(ref_dates, mean_nppv, '-', 'Color', [0.20 0.50 0.90], ...
         'LineWidth', 1.5);
-    yline(ax1, mean(ts_nppv,'omitnan'), '--', 'Color', [0.5 0.5 0.5], ...
-        'LineWidth', 1.2, ...
-        'Label', sprintf('Mean = %.3f', mean(ts_nppv,'omitnan')), ...
-        'LabelHorizontalAlignment', 'left');
-    ylabel(ax1, 'NPPV (mg C m^{-2} d^{-1})', 'FontSize', 10, ...
-        'FontWeight', 'bold');
-    set(ax1, 'FontSize', 10, 'Box', 'on', 'XGrid', 'on', 'YGrid', 'on', ...
-        'GridAlpha', 0.25, 'GridLineStyle', '--');
-    xtickformat(ax1, 'dd-MMM-yyyy');
-    xtickangle(ax1, 30);
-    hold(ax1, 'off');
+    ylabel('NPPV (mg C m^{-2} d^{-1})', 'FontSize', 10, 'FontWeight', 'bold');
 
-    % ---- Bottom panel: SPM ----
-    ax2 = nexttile;
-    hold(ax2, 'on');
-    plot(ax2, t_spm, ts_spm, '-', 'Color', [0.85 0.33 0.10], ...
+    % ---- Right y-axis: SPM ----
+    yyaxis right
+    h2 = plot(ref_dates, mean_spm, '-', 'Color', [0.85 0.33 0.10], ...
         'LineWidth', 1.5);
-    yline(ax2, mean(ts_spm,'omitnan'), '--', 'Color', [0.5 0.5 0.5], ...
-        'LineWidth', 1.2, ...
-        'Label', sprintf('Mean = %.3f', mean(ts_spm,'omitnan')), ...
-        'LabelHorizontalAlignment', 'left');
-    ylabel(ax2, 'SPM (g m^{-3})', 'FontSize', 10, 'FontWeight', 'bold');
-    xlabel(ax2, 'Date', 'FontSize', 10);
-    set(ax2, 'FontSize', 10, 'Box', 'on', 'XGrid', 'on', 'YGrid', 'on', ...
-        'GridAlpha', 0.25, 'GridLineStyle', '--');
-    xtickformat(ax2, 'dd-MMM-yyyy');
-    xtickangle(ax2, 30);
-    hold(ax2, 'off');
+    ylabel('SPM (g m^{-3})', 'FontSize', 10, 'FontWeight', 'bold');
 
-    sgtitle(title_str, 'FontSize', 13, 'FontWeight', 'bold');
+    % ---- Formatting ----
+    xlabel('Time', 'FontSize', 10);
+    title(title_str, 'FontSize', 13, 'FontWeight', 'bold');
+    legend([h1 h2], {'NPPV', 'SPM'}, 'Location', 'best', 'FontSize', 9);
+    set(gca, 'FontSize', 10, 'Box', 'on', 'XGrid', 'on', 'YGrid', 'on', ...
+        'GridAlpha', 0.25, 'GridLineStyle', '--');
+    xtickformat('dd-MMM');
+    xtickangle(30);
 
     exportgraphics(gcf, fullfile(output_dir, [filename '.png']), ...
         'Resolution', 300);
